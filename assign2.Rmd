@@ -1,0 +1,614 @@
+---
+title: "Assignment 2"
+author: "Faraz Ahmadi"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  html_document: 
+    number_sections: TRUE
+    fig_caption: true
+    code_folding: hide
+    toc: yes
+    toc_float: 
+      toc_collapsed: true
+    theme: readable
+---
+
+```{r setup, include=FALSE, echo=FALSE, eval=TRUE} 
+knitr::opts_chunk$set(echo = TRUE, comment=NA, eval=TRUE, echo=TRUE, warning=FALSE, message=FALSE, error=FALSE, root.dir = "E:/Marketing Analytics-- K. Deal/Assignment_2") ##echo is for the codes, eval is for the outputs
+```
+
+# Statement of authorship
+
+I have executed and prepared this assignment and document by myself without the help of any other person.
+Signature:
+
+```{r echo=FALSE, fig.width=5, fig.height=3}
+knitr::include_graphics(path = "./signature.png") ##for the signature
+```
+
+# Background
+
+```{r}
+knitr::include_graphics(path = "./airplane.jpg") 
+```
+
+Passenger loyalty is fundamental to any airline aiming to maintain a stable market share and revenue stream (Chang and Hung, 2013), particularly in a turbulent market. The competitive landscape of the global airline industry has been in a constant change in recent years, with a rapid growth of low cost carriers and high-speed railways, rising fuel costs, fluctuating demand, and tighter security, safety and quality requirements. This is all but not considering a global pandemic like COVID-19 and its effects on airlines. To survive and grow, airlines managers need to identify factors of their services that satisfy and retain customers (Chen, 2008).
+
+# Objective
+
+In this report the objective is to analyze a data set and find which characteristics drive past customers to "fly again" with an airline, to develop a decent predictive model and provide insight to future marketing campaigns.
+
+# Methods
+
+## Return to airline data
+
+The data is consisted of 1768 observation and a total of 24 columns. The features are a mix of opinion-based questions and demographic information for past customers. Each customer is also asked whether he/she would fly again with this airline. The opinion-based questions use a scale from 1, meaning strongly disagree, to 9, strongly agree.
+
+Now to begin the analysis we read the data from the csv file. 
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(psych)
+library(DT)
+library(sjmisc)
+library(sjPlot)
+library( captioner)
+library( knitr)
+library(kableExtra)
+data <- read.csv("Airline_Key_Drivers.csv")
+headTail(data) %>% datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Airline data")
+```
+
+```{r  include=FALSE, echo=FALSE}
+fig_nums <- captioner(prefix="Figure ", auto_space=FALSE, levels = 1, type = c("n", "n", "n"), infix = ".")
+tab_nums <- captioner(prefix="Table ", auto_space=FALSE, levels = 1, type = c("n", "n", "n"), infix = ".")
+tab_nums("all_result", display = "cite")
+fig_nums("cor_plot", "imp_all", display = "cite")
+fig_nums("final_imp", display = "cite")
+citef <- pryr::partial(tab_nums, display = "cite")
+```   
+
+and the name and type of the variables in the data.
+
+```{r}
+str(data)
+```
+
+## Missing values Analysis
+
+The amount of missing values in each predictor is calculated in  next code chunks.
+
+```{r}
+library(inspectdf)
+data %>% inspect_na %>%
+  kable("html", align = 'clc', caption = 'Missing values count and percentage', digits=2) %>%
+    kable_styling(bootstrap_options = "striped", full_width = T, position = "center")
+```
+
+The plot below shows the missing percentages in visually appealing format. Note that there are less than 10% missing data in all predictors and the dependent variable **(FlyAgain)** has no missing value for all participants.
+
+```{r, fig.height= 6}
+data%>% inspect_na %>% show_plot(label_size = 8)
+```
+
+## Imputing the missing percentage
+
+For this we will use the Random Forest technique in the 'mice' package.
+
+```{r warning=FALSE, cache=TRUE}
+library(mice) 
+set.seed(456)
+tempData <- mice(data, m=5, maxit=50, meth='rf', seed=500, print=FALSE)
+```
+
+We pick the first of five imputed data sets and check if all missing values are correctly imputed.
+
+```{r}
+data_imp1 <- mice::complete(tempData)
+data_imp1 %>% inspect_na %>%
+  kable("html", align = 'clc', caption = 'Missing values count and percentage', digits=2) %>%
+    kable_styling(bootstrap_options = "striped", full_width = T, position = "center")
+```
+
+Statistical tests on the imputed data shows that the means and variance are not significantly different.
+
+```{r}
+library(matrixTests)
+
+d1 <- col_t_welch(data[2:23], data_imp1[2:23] )[c(1:2, 4:5, 12)]
+d2 <- col_f_var( data[2:23], data_imp1[2:23] )[c(4:5, 10)]
+
+d1 %>%
+  kable("html", align = 'clc', caption = 'First imputed data set', digits=2, col.names=c("fs n", "fs micerf n", "fs mean", "micerf mean", "p-value")) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+d2 %>%
+  kable("html", align = 'clc', caption = 'Comparing variances', digits=2, col.names=c( "fs var", "micerf var", "p-value")) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+```
+
+Let's merge the five imputed data sets using the 'sjmisc' package. After doing the statistical tests and checking every p-value, we pick the merged data set as the final imputed data set.
+
+```{r sjmisc, echo=FALSE}
+library(sjmisc)  
+mice_mrg <- merge_imputations(
+data,
+tempData,
+summary = c("hist" ),
+filter = NULL
+)
+#mice_mrg
+
+d1 <- col_t_welch(data[2:23], mice_mrg$data )[c(1:2, 4:5, 12)]
+d2 <- col_f_var( data[2:23], mice_mrg$data )[c(4:5, 10)]
+
+d1 %>%
+  kable("html", align = 'clc', caption = 'Merged of all 5 data sets', digits=2, col.names=c("fs n", "fs micerf n", "fs mean", "micerf mean", "p-value")) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+
+d2 %>%
+  kable("html", align = 'clc', caption = 'Comparing variances', digits=2, col.names=c( "fs var", "micerf var", "p-value")) %>%
+    kable_styling(bootstrap_options = "striped", full_width = F, position = "center")
+```
+
+**df** is the final imputed data set and it will be used from now on.
+
+```{r}
+df <- as.data.frame(cbind(mice_mrg$data, data$FlyAgain))
+names(df) <- names(data)[2:24]
+rm(data_imp, mice_mrg, tempData, data)#just for ease of use
+```
+
+It is better to Save and Read the imputed data to save time for next times! This is done below.
+
+```{r}
+#write.csv(df, "./imputed_data.csv", row.names = F)
+df <- read.csv("./imputed_data.csv")
+```
+
+
+## A glimpse on predictor values
+
+By running a value count on all predictors, it can be seen that the data is skewed to higher opinions and perceptions about the airline. Meaning the majority of customers had good opinion about the airline, which is very good for us. The downside however, is that it might be puzzling to analyze customers who will not return. We will see more of this in next analyses.
+
+```{r}
+library(wrapr)
+
+tabfun <- function(x){
+  table(x)
+}
+1:23 %.>%  (function(x) {lapply(df[,(x)], tabfun)}) (.)
+
+```
+
+# Analysis
+
+## Logistic Regression
+
+Now we implement a binomial logistic regression model in base R. At first we use all the variables, except for the RID that was omitted from the data set, the results and the p-value below shows that in the demographic variables only Education and Age are important. Meaning they have significant effect on the model. Overall, the logistic regression indicates that 12 out of 22 predictor variable are some how more important (significant) on how they affect the passenger's op pinon to fly with the airline again.
+
+```{r}
+glm.all <- glm( FlyAgain ~ . , data = df, family = 'binomial')
+summary(glm.all)
+```
+
+To get a sense about the coefficient in the table above, the odds ratio for Flight_Options is $e^{0.19887}$ = `r round(exp(0.19887), 2)`, meaning that the odds of returning to fly with this airline is increased by `r round(exp(0.19887), 2)` times for every one scale point increase in a customer's perception that the airline provides many valuable flight options.
+
+Of course this is not the only contributing factor to customer's return to fly and each predictor has an effect and our job is to find the most significant drivers to flying again with this airline.
+
+
+The ANOVA table below indicates the deviance improvements when each of the predictor candidates is added to the model.
+
+```{r}
+anova(glm.all, test = "Chisq") 
+```
+
+In the next step, another logistic regression model is built on the 12 predictors that were more promising. In this model which is called "glm.2", it can be seen that Age is no longer a significant contributing predictor. 
+
+Also it is evident that **Flight_Options**, **Overhead_Storage** and **Recommendation to other** are the major drivers of customer return in this model.
+
+```{r}
+glm.2 <- glm( FlyAgain ~ . -Marital.n -Sex.n -Income.n -Employment.n -Smoker.n -Language.n -Seat_Roominess - Courtesy -Helpfulness -Service , data = df, family = 'binomial')
+summary(glm.2)
+```
+
+In this next step, the model is reduced to only variables that have coefficients significantly different from zero at the 5% level of risk. Therefore, __Age__ is removed from the predictors and now the only non-attitudinal predictor is Education and we are not using the other demographic data.
+
+In the next two code chunks, summary of the reduced model is presented.
+
+```{r}
+glm.2.2 <- glm( FlyAgain ~ . -Marital.n -Sex.n -Income.n -Employment.n
+              -Smoker.n -Language.n -Seat_Roominess - Courtesy -Helpfulness
+              -Service -Age.n , data = df, family = 'binomial')
+summary(glm.2.2)
+```
+
+```{r}
+anova(glm.2.2, test = "Chisq") 
+```
+
+Comparing the metrics for all three models in the table below shows that the final reduced model is the performing better according to its BIC.
+
+```{r}
+library(texreg)
+screenreg( list(glm.all, glm.2, glm.2.2), custom.model.names=c("Return based on all", "Return based on 12 predictors", "Return based on 11 predictors"), digits=3 )
+```
+
+
+Below the 11 selected variables are listed. These are the predictors used in the final model.
+
+```{r}
+var <- c("Easy_Reservation", "Preferred_Seats"  ,"Flight_Options", "Ticket_Prices", "Seat_Comfort",
+         "Overhead_Storage", "Clean_Aircraft", "Friendliness", "Satisfaction", "Recommend", "Education.n")
+```
+
+## Multicollinearity, or high correlation among the predictors
+
+Correlation can harm the logistic regression model. So, a multicollinearity analysis is needed to see which predictors are associated with each other. Removing the duplicate information may result in a better and more simple model.
+
+**`r fig_nums("cor_plot")`**  
+
+```{r "cor_plot", echo=TRUE, message=FALSE, warning=FALSE, fig.width=15, fig.height=15}
+df %>% corPlot(  numbers=TRUE, stars=TRUE, upper=FALSE, diag=FALSE, main= "Correlation matrix of predictor perceptions",
+                         cex = .8, xlas=2) 
+```
+
+The finding deducted from **`r fig_nums("cor_plot")`** are as follows:
+
+* Service and helpfulness are correlated at a high level of 0.69. Moreover, Service was correlated with Friendliness and Courtesy. Therefore, Service was purged from the final model rightfully.
+
+* Helpfulness and Friendliness were also correlated together and Helpfulness was purged correctly due to not having a significant coefficient.
+
+* Seat Roominess and Seat comfort are correlated (Roominess is purged).
+
+* Overhead Storage & Clean Aircraft & Seat Comfort are correlated (all are in latest model). We will not touch them for now.
+
+
+## Correlation with the selected 11 variables.
+
+```{r}
+library(magrittr)
+library(kableExtra)
+df[var] %>% cor( )  %>% round( 2) %>% kable( caption = "Flight Correlation Table") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = F, position = "left", font_size = 12 )%>%
+  footnote(general = "These are Pearson correlation coefficients with 2 significant digits") 
+```
+
+After reducing the model to use only 11 predictors, the only remaining concern in multicollinearity of the predictors is the group of (Seat Comfort, Seat Roominess and Overhead Storage) variables.
+
+## Variance Inflation Factors -- a measure of likely harm from multicollinearity  
+
+VIF is computed for the model with all variable and the model using the most significant predictors. And, these VIFs are well within the acceptability limit of <4 . However, it can be seen that the predictors "Service" and "Satisfaction" that were removed in the latest model had the most VIF in all variables.
+
+```{r}
+library(car)
+(vf <- vif(glm.all) )
+(vf <- vif(glm.2.2) )
+```
+
+# Analysis in h2o
+
+## Logistic Regression using H2o
+
+The previous analyses was done on the whole data set, but a good predictor model is all about how it reacts to new and unseen data. In this chapter, we use h2o to divided the data into training and test(validation) subsets and then train the logistic regression to find the best model based on validation results and also find the key drivers of customer return to airline. However, the insights gained from previous chapter are used in the new h2o models as well.
+
+First we set up the h2o environment.
+
+```{r, results='hide'}
+library(h2o)
+h2o.init()
+```
+
+Then the imputed data frame from before is converted to h2o-readable format and splitted to train and test samples. The train-test ratio for this analysis is __70/30__.
+
+> Note: If your response column is binomial, then you must convert that column to a categorical (.asfactor() in Python and as.factor() in R) and set family = binomial. (From h2o online manual for GLMs)
+
+```{r, results='hide'}
+df$FlyAgain <- as.factor(df$FlyAgain)
+df_h2o <- as.h2o(df)
+df.split<- h2o.splitFrame(df_h2o, ratios=c(0.7), seed = 45)
+```
+
+Finally, the first logistic regression model is built, initially using all 22 predictors. Notice that model's coefficients are calculated with the training subset. Therefore, the results and metrics are different from what seen in Base-R method.
+
+```{r, results='hide'}
+# logistic regression
+h2o_glm.all <- h2o.glm(
+  family= "binomial",  
+  training_frame = df.split[[1]],        ## the H2O frame for training
+  validation_frame = df.split[[2]],      ## the H2O frame for validation (not required)
+  x=1:22,                        ## the predictor columns, by column index
+  y=23,
+  model_id = "df_GLM_all",
+  compute_p_values=TRUE, lambda=0
+)
+```
+
+The table below shows the coefficients of the model.
+
+```{r }
+h2o_glm.all@model$coefficients_table %>% datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T))
+```
+
+Below is a plot of the relative importance of variables in the model. It is based on the standardized coefficients magnitudes. Meaning bigger coefficients have higher impact on the log-odds of a customers returning to the airline.
+
+**`r fig_nums("imp_all")`**
+
+```{r 'imp_all', echo=TRUE, message=FALSE, warning=FALSE, fig.width=7, fig.height=7, comment=NA}
+h2o.std_coef_plot(h2o_glm.all, num_of_features = 12)
+pvalue <- h2o_glm.all@model$coefficients_table[order(h2o_glm.all@model$coefficients_table$p_value, decreasing = F), c("names", "p_value")]
+```
+
+To analyze the values in **`r fig_nums("imp_all")`** better, the table below shows the key drivers with a p-value below the 5% limit. These are based on the model trained with the training data and using all predictors. It is evident that **`r pvalue[2,1]`** is the most significant predictor of customers return. Meaning customers who will recommend this airline to others are most likely to fly again with the airline. 
+
+It is important to note that the logistic regression and its coefficients are highly dependent on the data used, therefore, when a different seed is used to divide train-test subsets, coefficients and **`r fig_nums("imp_all")`** change too. 
+
+```{r}
+pvalue <- h2o_glm.all@model$coefficients_table[order(h2o_glm.all@model$coefficients_table$p_value, decreasing = F), c("names", "p_value")]
+pvalue %>% filter(p_value < 0.05) %>% filter(names != 'Intercept') %>% datatable(rownames = F, filter="top", options = list(pageLength = 12, scrollX=T), caption = "Top Predictors in 95% CI", width = 500)
+```
+
+## Using each predictor
+
+In the code chunk below, the logistic regression model was trained using only one predictor at each time. Interestingly, all opinion-based questions had significant p-value (zero) and all personal and demographic variables in the questionnaire were non significant. Which makes sense as non-perceptional predictors performed very poorly in the model trained on whole date and again encourages us to purge them from the next models.
+
+**`r tab_nums("logistic_smoke")`**
+```{r, "logistic_smoke", results='hide'}
+h2o_glm.each <- h2o.glm(
+  family= "binomial",  
+  training_frame = df.split[[1]],        ## the H2O frame for training
+  validation_frame = df.split[[2]],      ## the H2O frame for validation (not required)
+  x=16,                        ## the predictor columns, by column index
+  y=23,
+  model_id = "df_GLM_smk",
+  compute_p_values=TRUE, lambda=0
+)
+```
+```{r}
+h2o_glm.each@model$coefficients_table %>% datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T))
+```
+
+
+In **`r tab_nums("logistic_smoke")`**, the logistic regression is trained on the smoking characteristic of customers. The p-value as mentioned is non significant.
+
+## Model using the selected variables from base-R
+
+For this reduced model, the same final 11 variables in base R are used.
+
+```{r, results='hide'}
+var #containing the variables of interest
+idx <- which(names(df) %in%  var)
+
+h2o_glm.2.2 <- h2o.glm(
+  family= "binomial",  
+  training_frame = df.split[[1]],        ## the H2O frame for training
+  validation_frame = df.split[[2]],      ## the H2O frame for validation (not required)
+  x=idx,                        ## the predictor columns, by column index
+  y=23,
+  model_id = "df_GLM_2",
+  compute_p_values=TRUE, lambda=0
+)
+```
+
+The intresting finding is resulted from the coefficients below, they are different than what we had in base-R. So what is the reason for that? The reason is that these coefficients have been computed using the training data only and before the logisitc regression was done on all data. So the latter results are more realistic although they are subject to change when different seeds are used to split the data.
+
+```{r }
+#options(max.print = 100000)
+h2o_glm.2.2@model$coefficients_table %>% datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T))
+```
+
+Below is a quick plot of the relative importance of variables in explaining Return based on the standardized coefficients. The plot does change when using different seeds, especially in the middle where most coeffs are not significantly different. Therefore, this plot could not be used with certainty to identify the **key drivers** of customer return. Further analysis is needed.
+
+
+
+```{r, echo=TRUE, message=FALSE, warning=FALSE, fig.width=7, fig.height=6, comment=NA}
+h2o.std_coef_plot(h2o_glm.2.2, num_of_features = 14)
+pvalue <- h2o_glm.2.2@model$coefficients_table[order(h2o_glm.2.2@model$coefficients_table$p_value, decreasing = F), c("names", "p_value")]
+#pvalue %>% datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T))
+```
+
+Below shows the significant predictors of FlyAgain in the reduced model. As you can see there are differences between the
+
+```{r}
+pvalue %>% filter(p_value < 0.05) %>% filter(names != 'Intercept') %>% datatable(rownames = F, filter="top", options = list(pageLength = 12, scrollX=T), caption = "Top Predictors in 95% CI", width = 500)
+```
+
+
+## Measuring Performance
+
+As you know the quality of the model is based on how it performs on the testing, or holdout, dataset. We would like a model that performs very well and is relatively simple, easy to understand and use for marketing strategy development. In this section we look at the performance of the two main models created before and try to find areas for improvment in order to select one or create a new better and reduced model.
+
+In the next code chunk the performance of the first model (based on all predictors) 
+
+```{r}
+perf <- h2o.performance(h2o_glm.all, df.split[[2]])
+perf
+```
+
+The hit ratio (overall) is __`r round( 100*(1 - perf@metrics$cm$table$Error[3]), digits = 3)`__ and is the proportion of the time that the model produces correct prediction of Return.
+
+The overall hit ratio, expressed as one minus the error rate above, can be misleading if the hit ratio for one category is much different from another. In this analysis, the hit ratio for predicting Return = No is `r round( 100*(1 - perf@metrics$cm$table$Error[1]), digits = 3)` and the hit ratio for predicting Return = Yes is `r round( 100*(1 - perf@metrics$cm$table$Error[2]), digits = 3)`. 
+
+The model is performing much better when predicting customers who will return to airline than those who won't.
+```{r}
+h2o.confusionMatrix(h2o_glm.all, df.split[[2]]) %>% kable( caption = "Confusion Matrix for model h2o_glm.all") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = T, position = "center", font_size = 20)%>%
+  footnote(general = "These are error rates of validation sample")
+```
+
+Now let's see how the reduced model with 11 predictors performed. 
+
+```{r}
+perf.2.2 <- h2o.performance(h2o_glm.2.2, df.split[[2]])
+perf.2.2
+```
+
+The hit ratio  __`r round( 100*(1 - perf.2.2@metrics$cm$table$Error[3]), digits = 3)`__ is almost the same but there was a decent decrease in AIC. The second model achieved a __AIC=`r h2o_glm.2.2@model$validation_metrics@metrics$AIC`__ improving on the __`r perf@metrics$AIC`__. It is not a huge improvement but shows that we are on the right path. The second model is relatively more simple and has the same accuracy as the previous one.
+
+## Room for improvement?
+
+The second model was more simple but it didn't perform any better. In fact it performed even more poorly when predicting the customers who said no to returning to airline! We saw that **Overhead_storage** was one of the key drivers in all model. Also in the multicollinearity analysis, we found out that it was highly correlated with **Seat_Comfort** and **Clean_Aircraft**. Therefore in an alternative model we purge these two variables and look at the results in the chunks below.
+
+
+But first Let's Make a function to easier compare and print each models results.
+```{r}
+
+results <- data.frame(Prediction_model=character(),
+                  hit_ratio=numeric(),
+                  MSE=numeric(),
+                  RMSE=numeric(),
+                  R2=numeric(),
+                  AIC=numeric(),
+                  AUC=numeric(),
+                  mean_per_class_error=numeric(),
+                  stringsAsFactors=FALSE) 
+
+newModel <- function(results, model, name){
+    if (name %in% results$Prediction_model) {return(results)}
+    i <- dim(results)[1]
+    i <- i + 1 
+    results[i, 1] <- name
+    results[i, 2] <- round( (1 - h2o.performance(model, newdata = df.split[[2]] )@metrics$cm$table$Error[3] ), digits = 3 )
+    results[i, 3] <- round( model@model$validation_metrics@metrics$MSE, digits = 3 )   
+    results[i, 4] <- round( model@model$validation_metrics@metrics$RMSE, digits = 3 )
+    results[i, 5] <- round( model@model$validation_metrics@metrics$r2, digits = 3 )
+    results[i, 6] <- round( model@model$validation_metrics@metrics$AIC, digits = 3 )
+    results[i, 7] <- round( h2o.performance(model, newdata = df.split[[2]] )@metrics$AUC, digits = 3 )
+    results[i, 8] <- round( model@model$validation_metrics@metrics$ mean_per_class_error, digits = 3 ) 
+    return(results)
+}
+```
+
+The following performance metrics is stated for each of first two models.
+
+```{r  }
+results <- newModel(results, h2o_glm.all, "GLM_Logistic_regression_allVar")
+results <- newModel(results, h2o_glm.2.2, "GLM_Logistic_regression_reduced_Var")
+results %>% datatable(rownames = F, filter="top", options = list(pageLength = 12, scrollX=T), caption = "Logistic Regression Model Performance metrics on validation data")
+```
+
+Now the alternative model is trained using __11-2 = 9__ predictors. Removing the supposedly duplicate information in Seat_Comfort and Clean_Aircraft columns.
+
+```{r, results='hide'}
+# var
+# names(df)[!(names(df) %in% var)]
+# idx
+# names(df)
+
+idx.4 <- idx[!(idx %in% c(5, 8))]
+idx.4
+#"These are the predictors in model glm.2.4"
+print(names(df)[idx.4])
+h2o_glm.2.4 <- h2o.glm(x=idx.4,
+                       y=23,
+                       family= "binomial",
+                        training_frame = df.split[[1]],        ## the H2O frame for training
+                        validation_frame = df.split[[2]],      ## the H2O frame for validation (not required)
+                        model_id = "df_GLM_4",
+                        compute_p_values=TRUE, lambda=0
+                       )
+```
+
+```{r}
+h2o.performance(h2o_glm.2.4, df.split[[2]])
+```
+
+
+In `r tab_nums('all_result')` the performance metrics off all three models is included. The third model is with a good chance the most accurate and most simple among the rest. 
+
+__`r tab_nums('all_result')`__
+```{r 'all_result'}
+results <- newModel(results, h2o_glm.2.4, "GLM_Logistic_regression_9_Var")
+results%>% datatable(rownames = F, filter="top", options = list(pageLength = 12, scrollX=T), caption = "Logistic Regression Model Performance metrics on validation data")
+```
+
+# Key Findings
+
+The goal of this analysis was to produce a model to effectively predict chances of customers return to fly with the airline again. Through multiple analyses we came upon a logistic regression model that is relatively simple and has a good performance on the hold-out data. 
+
+This model uses __`r h2o_glm.2.4@model$names[1:9]`__ to find the __`r h2o_glm.2.4@model$names[10]`__ probability. The logistic regression computes coefficients for all predictors and uses them to find the log-odds of the probability of customers flying again. The formula is:
+
+
+> $log-odds=logit(P_{return})=log(\frac{P}{1-P})= \beta_0 + \beta_1 x_1 +...+\beta_9 x_9$
+
+$\beta_0$ to $\beta_9$ are the coefficients the model gives us and $x_0$ to $x_9$ are the values of predictors. This gives us the probability of a customer returning to fly again with the airline.
+
+
+These coefficients for the final selected model are as below:
+
+```{r}
+h2o_glm.2.4@model$coefficients
+```
+
+The first columns is the predicted Fly_Again and **p0** and **p1** are the probabilities of a customer's return (p1) or not return (p0) to fly with airline.
+
+```{r, results='hide'}
+y <- h2o.predict(h2o_glm.2.4, df.split[[2]])
+y1 <- as.data.frame(y)
+y1["id"] <- rownames(y1) #add id col for merge function! otherwise will not work!
+test <- as.data.frame(df.split[[2]])
+test["id"] <- rownames(test)
+```
+
+```{r}
+pred <- merge( y1,test[,c(idx.4,23:24)], by = "id", sort = T)
+#pred <- pred %>% arrange(id)
+pred <-pred[, 2:15] 
+pred[c("p0", "p1", "StdErr")] <- pred[c("p0", "p1", "StdErr")] %>% round(3)
+head(pred)  %>%  datatable(rownames = F, filter="top", options = list(pageLength = 10, scrollX=T), caption = "Predicted Probability for 5 random customers")
+```
+
+The Confusion Matrix for the final model is as below. As seen before, the model performs a lot better when predicting people who said Yes to returning than those who said no.
+
+```{r}
+h2o.confusionMatrix(h2o_glm.2.4, df.split[[2]]) %>% kable( caption = "Confusion Matrix for model 9_Var model") %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), full_width = T, position = "center", font_size = 20)%>%
+  footnote(general = "These are error rates for the validation sample")
+```
+ROC curve for final model.
+
+```{r}
+plot(h2o.performance(h2o_glm.2.4, df.split[[2]]))
+```
+
+Looking at the variable importance in the final model. __`r  h2o.varimp(h2o_glm.2.4)$variable[1:2]`__ are the top drivers of customers return with a large margin. After them, the next 5 predictors have nearly the same significance. These are __`r  h2o.varimp(h2o_glm.2.4)$variable[3:7]`__. The marketing team can use this 5 or 6 predictors as the key drivers of customers return to airline.
+
+__`r fig_nums("final_imp")`__
+
+```{r "final_imp", fig.width=7, fig.height=5}
+rf_variable_importances <-  data.frame( h2o.varimp(h2o_glm.2.4)$variable, h2o.varimp(h2o_glm.2.4)$percentage)
+colnames(rf_variable_importances) <- c("variable_name", "importances")
+# rf_variable_importances
+#install.packages("plotly", dependencies=TRUE)
+library(plotly)
+plot_ly(rf_variable_importances, 
+        #        x = rf_variable_importances$percentage, 
+        y=reorder(rf_variable_importances$variable_name,
+                  rf_variable_importances$importances),
+        x = rf_variable_importances$importances,
+        color = rf_variable_importances$variable_name,
+        type = 'bar', orientation = 'h') %>%
+  layout( title = "Variable Importance",
+          xaxis = list(title = "Percentage Importance"),
+          ylim=c(0,1),
+          margin = list(l = 120)) 
+```  
+
+
+# Conclusions
+
+The goal of the previous chapters was to find a good predictive model. This was done, the model using 9 predictors does a decent job of finding customers who will return to airline. However, the model performs not goodly enough in predicting non-returning customers. This might be because of the limitations of data or the logistic regression model. It might not be a bad idea to try other models such as Random Forest or Gradient Boost for future works. 
+
+The other objective was to find the key drivers of customers return. Through many different models created on the data set, using different groups of predictors and as seen in `r fig_nums("final_imp")`, the following variables are believed to be of most value for future marketing campaigns.
+
+1. __Recommend__: How much likely a customer recommends the airline to others, is definitely how likely they will return to fly again.
+2. __Overhead_Storage__: It was the second most key driver in almost all models. The adequate size of overhead storage is a important feature of a good flight and an airline.
+3. __Flight_Options__: The quality and quantity of airline options was among the top drivers in predicting return to airline among customers. This was evident in almost all models.
+4. __Ticket_Prices__: Having a higher quality airline causes the ticket prices to rise as well, however, different segments could react differently to ticket prices as a driver to return. But as we are not analyzing segments of the market in this report, it is safe to say that an optimal price could be used to drive customers to return yet not damaging the quality of other factors.
+5. __Easy_reservation__: Although not being in the top 5 predictors of the final model, it was repetitively among the most significant coefficients and how could it not be important? How could customers buy tickets again when the reservation process is not easy.
+
+The preceding predictors could be named as the key drivers of customer return and are of great value to the marketing team. Of course there is always room for improvement and other machine learning techniques could offer more valuable insights.
+
+
+
